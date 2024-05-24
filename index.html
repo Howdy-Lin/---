@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Bar Chart</title>
+    <style>
+        body {
+            display: flex;
+            height: 100vh;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .left,
+        .middle,
+        .right {
+            border: 1px solid black;
+            box-sizing: border-box;
+        }
+
+        .left {
+            width: 20%;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .middle {
+            width: 60%;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+        }
+
+        .top {
+            flex: 0.1;
+            border: 1px solid black;
+            padding: 10px;
+        }
+
+        .bottom {
+            flex: 0.9;
+            border: 1px solid black;
+            padding: 10px;
+        }
+
+        .right {
+            width: 20%;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .title-list {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="left">
+        <h2>Job Category</h2>
+        <div id="job-category-list">
+            <!-- Dynamic checklists will be generated here -->
+        </div>
+    </div>
+    <div class="middle">
+        <div class="top">
+            <label for="x-axis-select">X-axis:</label>
+            <select id="x-axis-select">
+                <option value="experience_level">Experience Level</option>
+                <option value="employment_type">Employment Type</option>
+                <option value="company_location">Company Location</option>
+                <option value="work_setting">Work Setting</option>
+                <option value="company_size">Company Size</option>
+            </select>
+
+            <label for="y-axis-select">Y-axis:</label>
+            <select id="y-axis-select">
+                <option value="salary_in_usd">Salary in USD</option>
+            </select>
+        </div>
+        <div class="bottom">
+            <svg width="100%" height="100%"></svg>
+        </div>
+    </div>
+    <div class="right">
+        <h2>Selected Feature Distribution</h2>
+        <div id="feature-distribution">
+            <!-- Feature distribution charts will be generated here -->
+        </div>
+    </div>
+
+    <!-- Load D3.js -->
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <script>
+        let data; // Global variable to store the data
+
+        // Load the CSV file and process the data
+        d3.csv('./jobs_in_data_2024.csv').then(function (csvData) {
+            data = csvData;
+            // Initial bar chart rendering
+            updateBarChart();
+            updateFeatureDistribution();
+
+            // Group the data by job_category
+            const jobCategories = d3.group(data, d => d.job_category);
+
+            // Select the job-category-list div
+            const jobCategoryList = d3.select('#job-category-list');
+
+            // Iterate over each job category group
+            jobCategories.forEach((titles, category) => {
+                // Create a div for each category
+                const categoryDiv = jobCategoryList.append('div').attr('class', 'category');
+
+                // Add a label for the category
+                categoryDiv.append('label')
+                    .attr('class', 'category-label')
+                    .text(category)
+                    .on('dblclick', function () {
+                        // Toggle the display of the title list on double-click
+                        const titleList = d3.select(this.parentNode).select('.title-list');
+                        const isVisible = titleList.style('display') === 'block';
+                        titleList.style('display', isVisible ? 'none' : 'block');
+                    });
+
+                // Create a ul element to hold the job titles
+                const titleList = categoryDiv.append('ul').attr('class', 'title-list');
+
+                // Add a "Select All" option
+                titleList.append('li')
+                    .attr('class', 'title-item')
+                    .append('label')
+                    .attr('class', 'title-label')
+                    .html(`<input type="checkbox" class="select-all-checkbox" data-category="${category}"> Select All`)
+                    .select('input')
+                    .on('change', function () {
+                        // Select or deselect all job titles in this category
+                        const isChecked = d3.select(this).property('checked');
+                        d3.selectAll(`.title-checkbox[data-category="${category}"]`)
+                            .property('checked', isChecked)
+                            .each(function () {
+                                const checkbox = d3.select(this);
+                                checkbox.dispatch('change'); // Trigger change event
+                            });
+                    });
+
+                // Create a Set to avoid duplicate job titles
+                const uniqueTitles = new Set(titles.map(d => d.job_title));
+
+                // Iterate over the unique job titles in this category
+                uniqueTitles.forEach(title => {
+                    // Add each job title as a list item with a checkbox
+                    titleList.append('li')
+                        .attr('class', 'title-item')
+                        .append('label')
+                        .attr('class', 'title-label')
+                        .html(`<input type="checkbox" class="title-checkbox" data-category="${category}" data-title="${title}"> ${title}`)
+                        .select('input')
+                        .on('change', function () {
+                            updateBarChart(); // Update bar chart on change
+                            updateFeatureDistribution(); // Update feature distribution on change
+                        });
+                });
+            });
+
+            // Add event listener for "Select All" checkboxes
+            d3.selectAll('.select-all-checkbox').on('change', function () {
+                const category = d3.select(this).attr('data-category');
+                const isChecked = d3.select(this).property('checked');
+                d3.selectAll(`.title-checkbox[data-category="${category}"]`)
+                    .property('checked', isChecked)
+                    .each(function () {
+                        const checkbox = d3.select(this);
+                        checkbox.dispatch('change'); // Trigger change event
+                    });
+            });
+
+            // Add event listener for x-axis and y-axis selects
+            d3.selectAll('#x-axis-select, #y-axis-select').on('change', function () {
+                updateBarChart();
+                updateFeatureDistribution();
+            });
+        }).catch(function (error) {
+            console.error('Error loading the CSV file:', error);
+        });
+
+            function updateBarChart() {
+        // Get the selected x-axis and y-axis
+        const xAxis = d3.select('#x-axis-select').property('value');
+        const yAxis = d3.select('#y-axis-select').property('value');
+
+        // Get the SVG element and its dimensions
+        const svg = d3.select('svg');
+        const width = parseInt(svg.style('width'));
+        const height = parseInt(svg.style('height'));
+
+        // Set the margins
+        const margin = { top: 20, right: 20, bottom: 100, left: 50 }; // Increase bottom margin for rotated labels
+        const innerWidth = width - margin.left - margin.right;
+        const innerHeight = height - margin.top - margin.bottom;
+
+        // Clear the SVG
+        svg.selectAll('*').remove();
+
+        // Append a group element to SVG
+        const g = svg.append('g')
+            .attr('transform', `translate(${margin.left},${margin.top})`);
+
+        // Define tooltip
+        const tooltip = d3.select("body").append("div")
+            .attr("class", "tooltip")
+            .style("position", "absolute")
+            .style("visibility", "hidden")
+            .style("background", "#fff")
+            .style("border", "1px solid #000")
+            .style("padding", "5px")
+            .style("border-radius", "5px");
+
+        // Filter the data based on selected job titles
+        const filteredData = data.filter(d => {
+            const checkbox = d3.select(`.title-checkbox[data-title="${d.job_title}"]`);
+            return checkbox.empty() ? false : checkbox.property('checked');
+        });
+
+        // Group by xAxis categories and job titles
+        const groupedData = d3.group(filteredData, d => d[xAxis], d => d.job_title);
+
+        // Get unique x values and job titles
+        const xValues = Array.from(groupedData.keys());
+        const jobTitles = Array.from(new Set(filteredData.map(d => d.job_title)));
+
+        // Set the scales
+        const xScale = d3.scaleBand()
+            .domain(xValues)
+            .range([0, innerWidth])
+            .padding(0.1);
+
+        const yScale = d3.scaleLinear()
+            .domain([0, d3.max(filteredData, d => +d[yAxis])])
+            .range([innerHeight, 0]);
+
+        const colorScale = d3.scaleOrdinal(d3.schemeCategory10)
+            .domain(jobTitles);
+
+        // Set the axes
+        const xAxisG = g.append('g')
+            .attr('transform', `translate(0,${innerHeight})`)
+            .call(d3.axisBottom(xScale));
+
+        const yAxisG = g.append('g')
+            .call(d3.axisLeft(yScale));
+
+        // Rotate x-axis labels
+        xAxisG.selectAll('text')
+            .attr('transform', 'rotate(45)')
+            .style('text-anchor', 'start')
+            .attr('dx', '.8em')
+            .attr('dy', '.15em');
+
+        // Add labels to the axes
+        xAxisG.append('text')
+            .attr('class', 'axis-label')
+            .attr('x', innerWidth / 2)
+            .attr('y', 80) // Adjust y position for rotated labels
+            .attr('fill', 'black')
+            .text(xAxis.replace('_', ' ').toUpperCase());
+
+        yAxisG.append('text')
+            .attr('class', 'axis-label')
+            .attr('x', -innerHeight / 2)
+            .attr('y', -40)
+            .attr('fill', 'black')
+            .attr('transform', 'rotate(-90)')
+            .attr('text-anchor', 'middle')
+            .text(yAxis.replace('_', ' ').toUpperCase());
+
+        // Plot bars
+        const barGroups = g.selectAll('.bar-group')
+            .data(xValues)
+            .enter().append('g')
+            .attr('class', 'bar-group')
+            .attr('transform', d => `translate(${xScale(d)},0)`);
+
+        barGroups.each(function (xValue) {
+            const barGroup = d3.select(this);
+            const jobTitleData = groupedData.get(xValue);
+            if (jobTitleData) {
+                jobTitles.forEach(jobTitle => {
+                    const jobData = jobTitleData.get(jobTitle) || [];
+                    const median = d3.median(jobData, d => +d[yAxis]);
+                    if (median) {
+                        barGroup.append('rect')
+                            .attr('class', 'bar')
+                            .attr('x', xScale.bandwidth() / jobTitles.length * jobTitles.indexOf(jobTitle))
+                            .attr('y', yScale(median))
+                            .attr('width', xScale.bandwidth() / jobTitles.length)
+                            .attr('height', innerHeight - yScale(median))
+                            .attr('fill', colorScale(jobTitle))
+                            .on("mouseover", function (event, d) {
+                                tooltip.style("visibility", "visible").text(median);
+                            })
+                            .on("mousemove", function (event) {
+                                tooltip.style("top", (event.pageY - 10) + "px").style("left", (event.pageX + 10) + "px");
+                            })
+                            .on("mouseout", function () {
+                                tooltip.style("visibility", "hidden");
+                            });
+                    }
+                });
+            }
+        });
+
+        // Add legend
+        const legend = svg.append('g')
+            .attr('class', 'legend')
+            .attr('transform', `translate(${width - margin.right - 120}, ${margin.top})`);
+
+        const legendItem = legend.selectAll('.legend-item')
+            .data(colorScale.domain())
+            .enter().append('g')
+            .attr('class', 'legend-item')
+            .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+
+        legendItem.append('rect')
+            .attr('x', 0)
+            .attr('y', 0)
+            .attr('width', 12)
+            .attr('height', 12)
+            .attr('fill', colorScale);
+
+        legendItem.append('text')
+            .attr('x', 18)
+            .attr('y', 10)
+            .attr('font-size', '12px')
+            .text(d => d);
+    }
+
+
+
+        function updateFeatureDistribution() {
+            // Get the selected job titles
+            const selectedTitles = [];
+            d3.selectAll('.title-checkbox').each(function () {
+                const checkbox = d3.select(this);
+                if (checkbox.property('checked')) {
+                    selectedTitles.push(checkbox.attr('data-title'));
+                }
+            });
+
+            // Filter the data based on selected job titles
+            const filteredData = data.filter(d => selectedTitles.includes(d.job_title));
+
+            // Clear the feature-distribution div if no job titles are selected
+            if (filteredData.length === 0) {
+                d3.select('#feature-distribution').selectAll('*').remove();
+                return;
+            }
+
+            console.log('Filtered Data:', filteredData);
+
+            // Define the attributes to display
+            const attributes = ['experience_level', 'employment_type', 'company_location', 'work_setting', 'company_size', 'salary_in_usd'];
+
+            // Select the feature-distribution div
+            const featureDistribution = d3.select('#feature-distribution');
+
+            // Clear the feature-distribution div
+            featureDistribution.selectAll('*').remove();
+
+            // Set dimensions for each chart
+            const chartWidth = 300;
+            const chartHeight = 200;
+            const margin = { top: 40, right: 20, bottom: 50, left: 40 }; // Increase top margin to accommodate x-axis title
+
+            // Set the color scale for job titles
+            const colorScale = d3.scaleOrdinal(d3.schemeCategory10)
+                .domain(selectedTitles);
+
+            attributes.forEach(attribute => {
+                const svg = featureDistribution.append('svg')
+                    .attr('width', chartWidth)
+                    .attr('height', chartHeight)
+                    .style('margin', '10px');
+
+                const innerWidth = chartWidth - margin.left - margin.right;
+                const innerHeight = chartHeight - margin.top - margin.bottom;
+
+                const g = svg.append('g')
+                    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+                if (attribute === 'salary_in_usd') {
+                    // Define bins for salary
+                    const minSalary = d3.min(filteredData, d => +d[attribute]);
+                    const maxSalary = d3.max(filteredData, d => +d[attribute]);
+                    const binCount = 10;
+                    const binWidth = (maxSalary - minSalary) / binCount;
+                    const bins = d3.bin()
+                        .domain([minSalary, maxSalary])
+                        .thresholds(d3.range(minSalary, maxSalary, binWidth))
+                        (filteredData.map(d => +d[attribute]));
+
+                    console.log('Bins:', bins);
+
+                    const xScale = d3.scaleBand()
+                        .domain(bins.map((d, i) => i))
+                        .range([0, innerWidth])
+                        .padding(0.1);
+
+                    const yScale = d3.scaleLinear()
+                        .domain([0, d3.max(bins, d => d.length)])
+                        .nice()
+                        .range([innerHeight, 0]);
+
+                    // Set the axes
+                    const xAxisG = g.append('g')
+                        .attr('transform', `translate(0,${innerHeight})`)
+                        .call(d3.axisBottom(xScale).tickFormat(i => {
+                            const bin = bins[i];
+                            return `${Math.round(bin.x0 / 1000)}k-${Math.round(bin.x1 / 1000)}k`;
+                        }));
+
+                    const yAxisG = g.append('g')
+                        .call(d3.axisLeft(yScale).ticks(Math.min(5, d3.max(bins, d => d.length))).tickFormat(d3.format("d")));
+
+                    // Rotate x-axis labels for salary
+                    xAxisG.selectAll('text')
+                        .attr('transform', 'rotate(45)')
+                        .style('text-anchor', 'start')
+                        .attr('dx', '.8em')
+                        .attr('dy', '.15em');
+
+                    // Add labels to the axes
+                    g.append('text')
+                        .attr('class', 'axis-label')
+                        .attr('x', innerWidth / 2)
+                        .attr('y', -20) // Position x-axis title above the chart
+                        .attr('fill', 'black')
+                        .attr('text-anchor', 'middle')
+                        .text(attribute.replace('_', ' ').toUpperCase());
+
+                    // Prepare the data for stacking
+                    const binData = bins.map((bin, i) => {
+                        const values = {};
+                        bin.forEach(d => {
+                            const job_title = filteredData.find(entry => entry[attribute] == d)[`job_title`];
+                            if (!values[job_title]) {
+                                values[job_title] = 0;
+                            }
+                            values[job_title] += 1;
+                        });
+                        return { binIndex: i, values: values };
+                    });
+
+                    console.log('Bin Data:', binData);
+
+                    const stack = d3.stack()
+                        .keys(selectedTitles)
+                        .value((d, key) => d.values[key] || 0);
+
+                    const stackedData = stack(binData);
+
+                    console.log('Stacked Data:', stackedData);
+
+                    // Plot the stacked bars
+                    g.selectAll('.bar')
+                        .data(stackedData)
+                        .enter().append('g')
+                        .attr('fill', d => colorScale(d.key))
+                        .selectAll('rect')
+                        .data(d => d)
+                        .enter().append('rect')
+                        .attr('x', d => xScale(d.data.binIndex))
+                        .attr('y', d => yScale(d[1]))
+                        .attr('height', d => yScale(d[0]) - yScale(d[1]))
+                        .attr('width', xScale.bandwidth());
+                } else {
+                    // Calculate frequency for categorical attributes
+                    const frequency = {};
+                    filteredData.forEach(d => {
+                        if (!frequency[d[attribute]]) {
+                            frequency[d[attribute]] = {};
+                        }
+                        if (!frequency[d[attribute]][d.job_title]) {
+                            frequency[d[attribute]][d.job_title] = 0;
+                        }
+                        frequency[d[attribute]][d.job_title] += 1;
+                    });
+
+                    const dataForAttribute = Object.keys(frequency).map(key => ({
+                        key: key,
+                        values: frequency[key]
+                    }));
+
+                    const xScale = d3.scaleBand()
+                        .domain(dataForAttribute.map(d => d.key))
+                        .range([0, innerWidth])
+                        .padding(0.1);
+
+                    const yScale = d3.scaleLinear()
+                        .domain([0, d3.max(dataForAttribute, d => d3.sum(Object.values(d.values)))])
+                        .nice()
+                        .range([innerHeight, 0]);
+
+                    // Set the axes
+                    const xAxisG = g.append('g')
+                        .attr('transform', `translate(0,${innerHeight})`)
+                        .call(d3.axisBottom(xScale).tickFormat(d => d));
+
+                    const yAxisG = g.append('g')
+                        .call(d3.axisLeft(yScale).ticks(Math.min(5, d3.max(dataForAttribute, d => d3.sum(Object.values(d.values))))).tickFormat(d3.format("d")));
+
+                    // Rotate x-axis labels for categorical attributes
+                    xAxisG.selectAll('text')
+                        .attr('transform', 'rotate(45)')
+                        .style('text-anchor', 'start')
+                        .attr('dx', '.8em')
+                        .attr('dy', '.15em');
+
+                    // Add labels to the axes
+                    g.append('text')
+                        .attr('class', 'axis-label')
+                        .attr('x', innerWidth / 2)
+                        .attr('y', -20) // Position x-axis title above the chart
+                        .attr('fill', 'black')
+                        .attr('text-anchor', 'middle')
+                        .text(attribute.replace('_', ' ').toUpperCase());
+
+                    // Plot the stacked bars
+                    g.selectAll('.bar')
+                        .data(dataForAttribute)
+                        .enter().append('g')
+                        .attr('transform', d => `translate(${xScale(d.key)},0)`)
+                        .selectAll('rect')
+                        .data(d => Object.keys(d.values).map(job_title => ({
+                            job_title: job_title,
+                            value: d.values[job_title]
+                        })))
+                        .enter().append('rect')
+                        .attr('x', 0)
+                        .attr('y', (d, i, nodes) => {
+                            const previousValues = d3.selectAll(nodes).data().slice(0, i).map(d => d.value);
+                            return yScale(d3.sum(previousValues) + d.value);
+                        })
+                        .attr('width', xScale.bandwidth())
+                        .attr('height', d => innerHeight - yScale(d.value))
+                        .attr('fill', d => colorScale(d.job_title));
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
